@@ -139,44 +139,39 @@ flowchart LR
 
 ## Threshold Modulation
 
+Higher trust raises the bar for blocking — the same query gets different treatment depending on who asks it.
+
 ```mermaid
-block-beta
-  columns 4
+flowchart TD
+  formula["<b>effective_threshold = 0.3 + 0.4 x trust_score</b>\nHigher trust → higher threshold → harder to block"]
 
-  block:formula:4
-    f["effective_threshold = 0.3 + 0.4 x trust_score"]
-  end
+  formula --> p1 & p2 & p3 & p4
 
-  space:4
+  p1["<b>Pharma Enterprise</b>\nTrust = 0.91\nThreshold = 0.664"]
+  p2["<b>Regular Consumer</b>\nTrust = 0.85\nThreshold = 0.640"]
+  p3["<b>Day-old Gmail</b>\nTrust = 0.25\nThreshold = 0.400"]
+  p4["<b>Sleeper (day 120)</b>\nTrust = 0.35\nThreshold = 0.440"]
 
-  block:profiles:4
-    p1["Pharma Enterprise\nTrust = 0.91\nThreshold = 0.664"]
-    p2["Regular Consumer\nTrust = 0.85\nThreshold = 0.640"]
-    p3["Day-old Gmail\nTrust = 0.25\nThreshold = 0.400"]
-    p4["Sleeper (day 120)\nTrust = 0.35\nThreshold = 0.440"]
-  end
+  query["Query: <i>'VX nerve agent degradation?'</i>\nClassifier raw score = <b>0.65</b>"]
 
-  space:4
+  p1 --> r1
+  p2 --> r2
+  p3 --> r3
+  p4 --> r4
 
-  block:example:4
-    eq["Example: 'VX nerve agent degradation?' — raw score = 0.65"]
-  end
+  query -.-> r1 & r2 & r3 & r4
 
-  space:4
+  r1("ALLOW\n0.65 < 0.664")
+  r2("BLOCK\n0.65 > 0.640")
+  r3("BLOCK\n0.65 > 0.400")
+  r4("BLOCK\n0.65 > 0.440")
 
-  block:decisions:4
-    r1["ALLOW\n0.65 < 0.664"]
-    r2["BLOCK\n0.65 > 0.640"]
-    r3["BLOCK\n0.65 > 0.400"]
-    r4["BLOCK\n0.65 > 0.440"]
-  end
-
-  style f fill:#1a1a2e,color:#fff
+  style formula fill:#e8edfc,color:#1a1a2e,stroke:#1a1a2e,stroke-width:2px
+  style query fill:#4a90d9,color:#fff,stroke:#3a7fc9
   style p1 fill:#2d6a4f,color:#fff
   style p2 fill:#40916c,color:#fff
   style p3 fill:#e63946,color:#fff
-  style p4 fill:#ff9f1c,color:#000
-  style eq fill:#4a90d9,color:#fff
+  style p4 fill:#e67e22,color:#fff
   style r1 fill:#2d6a4f,color:#fff
   style r2 fill:#c44536,color:#fff
   style r3 fill:#c44536,color:#fff
