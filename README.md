@@ -110,87 +110,32 @@ flowchart TD
 ## Account Archetypes
 
 ```mermaid
-block-beta
-  columns 4
-
-  block:benign:2
-    bt["BENIGN (label=1)"]
-    space
-    ce["Clean Enterprise\n150 accounts\nPharma researchers\nTrust ~ 1.0"]
-    cc["Clean Consumer\n150 accounts\nGeneral users\nTrust ~ 1.0"]
+flowchart LR
+  subgraph BENIGN ["BENIGN — label = 1"]
+    direction TB
+    ce["<b>Clean Enterprise</b>\n150 accounts\nPharma researchers\nLegitimate CCL-domain queries\nTrust ~ 1.0"]
+    cc["<b>Clean Consumer</b>\n150 accounts\nGeneral users\nDiverse low-risk queries\nTrust ~ 1.0"]
   end
 
-  block:malicious:2
-    mt["MALICIOUS (label=0)"]
-    space
-    pa["Persistent Adversary\n100 accounts\nJailbreak attackers\nTrust ~ 0.0"]
-    sl["Sleeper\n100 accounts\nCompromised enterprise\nTrust decays over time"]
+  subgraph MALICIOUS ["MALICIOUS — label = 0"]
+    direction TB
+    pa["<b>Persistent Adversary</b>\n100 accounts\nSystematic jailbreak attacker\nHigh CCL concentration\nTrust ~ 0.0"]
+    sl["<b>Sleeper</b>\n100 accounts\nCompromised enterprise\nPhase 1: clean → Phase 2: adversarial\nTrust decays over time"]
   end
 
-  style bt fill:#2d6a4f,color:#fff
-  style ce fill:#40916c,color:#fff
-  style cc fill:#52b788,color:#fff
-  style mt fill:#c44536,color:#fff
-  style pa fill:#e63946,color:#fff
-  style sl fill:#ff9f1c,color:#000
+  ce -->|"content-similar\nqueries"| pa
+  cc -.->|"low overlap"| pa
+  ce -->|"same identity\nfeatures"| sl
+
+  style BENIGN fill:#e8f5e9,stroke:#2d6a4f,stroke-width:2px,color:#1a1a2e
+  style MALICIOUS fill:#fde8e8,stroke:#c44536,stroke-width:2px,color:#1a1a2e
+  style ce fill:#2d6a4f,color:#fff
+  style cc fill:#40916c,color:#fff
+  style pa fill:#c44536,color:#fff
+  style sl fill:#e67e22,color:#fff
 ```
 
-## Feature Pipeline
-
-```mermaid
-block-beta
-  columns 3
-
-  block:identity:1
-    id_title["Identity Features (5)"]
-    id1["account_age_days"]
-    id2["verification_level"]
-    id3["account_type"]
-    id4["org_reputation"]
-    id5["access_path_risk"]
-  end
-
-  block:behavioral:1
-    bh_title["Behavioral Features (8)"]
-    bh1["refusal_rate_7d / 30d"]
-    bh2["refusal_rate_zscore"]
-    bh3["rephrase_after_refusal"]
-    bh4["query_entropy"]
-    bh5["ccl_domain_concentration"]
-    bh6["cross_session_persistence"]
-    bh7["channel_migration"]
-  end
-
-  block:session:1
-    ss_title["Session Features (5)"]
-    ss1["max_risk_score"]
-    ss2["risk_trend_slope"]
-    ss3["mean_topic_escalation"]
-    ss4["mean_session_length"]
-    ss5["burst_score"]
-  end
-
-  style id_title fill:#4a90d9,color:#fff
-  style bh_title fill:#e07a5f,color:#fff
-  style ss_title fill:#6c5b7b,color:#fff
-  style id1 fill:#6ba3d6,color:#fff
-  style id2 fill:#6ba3d6,color:#fff
-  style id3 fill:#6ba3d6,color:#fff
-  style id4 fill:#6ba3d6,color:#fff
-  style id5 fill:#6ba3d6,color:#fff
-  style bh1 fill:#e8967f,color:#fff
-  style bh2 fill:#e8967f,color:#fff
-  style bh3 fill:#e8967f,color:#fff
-  style bh4 fill:#e8967f,color:#fff
-  style bh5 fill:#e8967f,color:#fff
-  style bh6 fill:#e8967f,color:#fff
-  style bh7 fill:#e8967f,color:#fff
-  style ss1 fill:#8b7a9e,color:#fff
-  style ss2 fill:#8b7a9e,color:#fff
-  style ss3 fill:#8b7a9e,color:#fff
-  style ss4 fill:#8b7a9e,color:#fff
-  style ss5 fill:#8b7a9e,color:#fff
-```
+> **Feature Pipeline details:** See [FEATURES.md](FEATURES.md) for the full 18-feature breakdown with diagrams.
 
 ## Threshold Modulation
 
