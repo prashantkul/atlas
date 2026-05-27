@@ -557,6 +557,34 @@ def _generate_report(l1_results: dict, l2_results: dict) -> Path:
       different risk appetites for different use cases.
     - A/B testing with online metrics (user satisfaction, appeal rate, adversary success rate)
       would replace offline AUC comparisons.
+
+    ### Client-Side Signals: Browser Fingerprint & Device Identity
+
+    The current ATLAS feature set is entirely server-side. A production deployment would
+    benefit from client-side signals including:
+
+    - **Browser/device fingerprint:** Canvas hash, WebGL renderer, installed fonts, screen
+      resolution, timezone, and navigator properties compose a semi-unique device identifier.
+      This enables detection of **account farming** (many accounts operated from the same
+      device) and **credential sharing** (one account used across unusual device diversity).
+      Adversaries who burn through throwaway accounts often reuse the same browser profile,
+      creating a cross-account linkage invisible to server-side features alone.
+    - **IP geolocation and ASN:** Data-center IPs, VPN/proxy exit nodes, and Tor relays are
+      disproportionately used by adversaries. Geolocation shifts (e.g., an enterprise account
+      normally in Boston suddenly querying from a residential IP in a different country) could
+      feed into `channel_migration` or a new `geo_anomaly` feature.
+    - **Device consistency score:** How stable the device fingerprint is over time. Legitimate
+      users show a small set of consistent devices. Adversaries using anti-fingerprinting tools
+      or VM rotation produce high device entropy.
+
+    **Privacy and fairness considerations:** Client-side signals carry significant risks.
+    Browser fingerprinting can proxy for socioeconomic status (older devices, less common
+    browsers). IP-based signals can discriminate against users in regions with limited ISP
+    diversity or where VPN usage is common for legitimate privacy reasons. Any production
+    deployment would require: (1) privacy review and user consent mechanisms, (2) differential
+    privacy or k-anonymity guarantees on fingerprint storage, (3) fairness audits to ensure
+    these signals do not disproportionately penalize protected demographic groups, and
+    (4) regulatory compliance (GDPR, CCPA) for fingerprint data retention.
   """)
 
   report_path = OUTPUTS_DIR / "evaluation_report.md"
