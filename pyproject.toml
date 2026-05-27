@@ -1,0 +1,40 @@
+[project]
+name = "atlas"
+version = "0.1.0"
+description = "Account Trust Layered Assessment Signal — two-level classifier pipeline for modulating safety classifiers with account trust"
+requires-python = ">=3.10"
+dependencies = [
+  "lightgbm>=4.0",
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "scikit-learn>=1.3",
+  "shap>=0.42",
+  "matplotlib>=3.7",
+  "seaborn>=0.12",
+  "openai>=1.0",
+  "tqdm>=4.65",
+  "pyarrow>=14.0",
+  "python-dotenv>=1.0",
+  "scipy>=1.10",
+]
+
+[project.scripts]
+atlas-generate-llm = "atlas.llm_generator:main"
+atlas-generate-programmatic = "atlas.programmatic_generator:main"
+atlas-features = "atlas.features:main"
+atlas-train-l1 = "atlas.l1_trust:main"
+atlas-train-l2 = "atlas.l2_query:main"
+atlas-evaluate = "atlas.evaluate:main"
+atlas-threshold-demo = "atlas.threshold_sim:main"
+atlas-pipeline = "scripts.run_pipeline:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
