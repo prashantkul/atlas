@@ -1,10 +1,19 @@
-.PHONY: generate-llm generate-programmatic features train-l1 train-l2 evaluate threshold-demo all all-no-llm clean
+.PHONY: generate-llm generate-programmatic annotate annotate-llama-guard annotate-full features train-l1 train-l2 evaluate threshold-demo all all-no-llm clean
 
 generate-llm:
 	uv run python -m atlas.llm_generator
 
 generate-programmatic:
 	uv run python -m atlas.programmatic_generator
+
+annotate:
+	uv run python -m atlas.annotator
+
+annotate-llama-guard:
+	uv run python -m atlas.annotator --llama-guard
+
+annotate-full:
+	uv run python -m atlas.annotator --llama-guard --target-llm
 
 features:
 	uv run python -m atlas.features
