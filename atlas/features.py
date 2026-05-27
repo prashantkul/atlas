@@ -184,7 +184,10 @@ def _compute_behavioral(
   overall_freq = _topic_freq_vector(all_turns)
   query_entropy = _shannon_entropy(overall_freq)
 
-  ccl_turns = sum(1 for t in all_turns if t.get("topic", "other") in CCL_DOMAINS)
+  ccl_turns = sum(
+    1 for t in all_turns
+    if t.get("topic_is_ccl", t.get("topic", "other") in CCL_DOMAINS)
+  )
   ccl_domain_concentration = ccl_turns / total
 
   session_freq_vecs = [_topic_freq_vector(s.get("turns", [])) for s in sessions]
@@ -281,14 +284,17 @@ def _extract_queries(account: dict) -> list[dict]:
   for s in account.get("sessions", []):
     refusal_count = sum(1 for t in s.get("turns", []) if t.get("is_refusal_likely", False))
     for t in s.get("turns", []):
+      risk_raw = t.get("risk_score", _risk_numeric(t.get("risk_level", "none")))
+      is_ccl = t.get("topic_is_ccl", t.get("topic", "other") in CCL_DOMAINS)
+      jb = t.get("jailbreak_detected", t.get("jailbreak_technique", "none") != "none")
       rows.append({
         "account_id": account_id,
         "archetype": archetype,
-        "query_risk_raw": _risk_numeric(t.get("risk_level", "none")),
-        "topic_is_ccl": int(t.get("topic", "other") in CCL_DOMAINS),
-        "jailbreak_technique_used": t.get("jailbreak_technique", "none"),
+        "query_risk_raw": float(risk_raw),
+        "topic_is_ccl": int(is_ccl),
+        "jailbreak_technique_used": int(jb),
         "turn_position": t.get("turn_num", 0),
-        "session_refusal_count": refusal_count,
+        "session_refusal_count": t.get("session_refusal_count", refusal_count),
       })
   return rows
 
@@ -414,6 +420,7 @@ def process_accounts(
 def main() -> None:
   parser = argparse.ArgumentParser(description="ATLAS feature engineering from raw LLM sessions")
   parser.add_argument("--raw-dir", type=Path, default=RAW_SESSIONS_DIR, help="Directory with raw JSONL session files")
+  parser.add_argument("--input", type=Path, default=None, help="Specific JSONL file to process (overrides --raw-dir)")
   parser.add_argument("--seed", type=int, default=SEED, help="Random seed")
   parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
   args = parser.parse_args()
@@ -424,12 +431,21 @@ def main() -> None:
 
   rng = np.random.RandomState(args.seed)
 
-  accounts = _load_raw_sessions(args.raw_dir)
+  if args.input:
+    log.info("Loading from %s", args.input)
+    accounts = []
+    with open(args.input) as f:
+      for line in f:
+        line = line.strip()
+        if line:
+          accounts.append(json.loads(line))
+  else:
+    accounts = _load_raw_sessions(args.raw_dir)
   if not accounts:
-    log.info("No JSONL files found in %s — nothing to do", args.raw_dir)
+    log.info("No sessions found — nothing to do")
     return
 
-  log.info("Loaded %d accounts from raw sessions", len(accounts))
+  log.info("Loaded %d accounts", len(accounts))
   accounts_df, queries_df, sleeper_df = process_accounts(accounts, rng)
 
   accounts_df.to_parquet(ACCOUNTS_PARQUET, index=False)

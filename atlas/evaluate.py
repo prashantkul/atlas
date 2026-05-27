@@ -119,7 +119,8 @@ def _l1_sleeper_detection(model: object) -> dict[str, float]:
     return {}
 
   traj = pd.read_parquet(traj_path)
-  feature_cols = [c for c in traj.columns if c not in ("account_id", "day")]
+  non_feature_cols = {"account_id", "day", "archetype", "label", "window_idx"}
+  feature_cols = [c for c in traj.columns if c not in non_feature_cols]
 
   traj["trust_score"] = model.predict_proba(traj[feature_cols])[:, 1]  # type: ignore[union-attr]
 

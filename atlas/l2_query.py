@@ -62,6 +62,7 @@ def _load_and_merge(
   l1 = pd.read_parquet(l1_predictions_path)
   log.info("Loaded %d L1 predictions", len(l1))
 
+  queries = queries.drop(columns=["archetype"], errors="ignore")
   df = queries.merge(l1[["account_id", "archetype", "trust_score"]], on="account_id", how="left")
   log.info("Merged dataset: %d rows, trust_score NaN count: %d",
            len(df), df["trust_score"].isna().sum())
