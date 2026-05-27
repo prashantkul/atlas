@@ -136,6 +136,8 @@ flowchart LR
 ```
 
 > **Feature Pipeline:** See [FEATURES.md](FEATURES.md) for overview diagrams and distributions, and [FEATURE_ENGINEERING.md](FEATURE_ENGINEERING.md) for the full design doc with detailed definitions at every level (account, session, query).
+>
+> **Deployment:** See [DEPLOYMENT.md](DEPLOYMENT.md) for deploying ATLAS as a safety gateway in front of Gemma 4 served by vLLM.
 
 ## Threshold Modulation
 
