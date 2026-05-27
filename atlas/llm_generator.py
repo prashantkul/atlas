@@ -201,12 +201,17 @@ def _parse_json_response(raw: str) -> dict | None:
 def _build_account_record(
   archetype: str,
   account_idx: int,
-  llm_data: dict,
-) -> dict:
+  llm_data: dict | list,
+) -> dict | None:
   account_id = str(uuid.uuid4())
-  sessions = llm_data.get("sessions", [])
   if isinstance(llm_data, list):
     sessions = llm_data
+  elif isinstance(llm_data, dict):
+    sessions = llm_data.get("sessions", list(llm_data.values())[0] if llm_data else [])
+    if not isinstance(sessions, list):
+      sessions = []
+  else:
+    return None
   return {
     "account_id": account_id,
     "archetype": archetype,
@@ -244,7 +249,13 @@ def generate(n_accounts: int = 500, output_dir: Path | None = None) -> None:
   consecutive_failures = 0
   max_consecutive_failures = 5
 
-  with open(outfile, "w") as f:
+  existing = 0
+  if outfile.exists():
+    with open(outfile) as ef:
+      existing = sum(1 for _ in ef)
+    log.info("Resuming — %d accounts already in %s", existing, outfile)
+
+  with open(outfile, "a") as f:
     for archetype, count in targets.items():
       log.info("Archetype %s: %d accounts", archetype, count)
       for batch_start in tqdm(range(0, count, BATCH_SIZE), desc=archetype):
@@ -261,7 +272,11 @@ def generate(n_accounts: int = 500, output_dir: Path | None = None) -> None:
             continue
           consecutive_failures = 0
           record = _build_account_record(archetype, idx, llm_data)
+          if record is None:
+            log.warning("Could not build record for account %d, skipping", idx)
+            continue
           f.write(json.dumps(record) + "\n")
+          f.flush()
           generated += 1
           time.sleep(random.uniform(0.5, 1.0))
 
