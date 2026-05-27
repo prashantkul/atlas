@@ -2,6 +2,8 @@
 
 The L1 trust scorer operates on an **18-dimensional feature vector** per account, organized into three groups: identity, behavioral, and session features.
 
+> For detailed definitions, design rationale, computation methods, and data models for every feature at the account, session, and query level, see **[FEATURE_ENGINEERING.md](FEATURE_ENGINEERING.md)**.
+
 ## Feature Overview
 
 ```mermaid

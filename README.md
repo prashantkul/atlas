@@ -135,7 +135,7 @@ flowchart LR
   style sl fill:#e67e22,color:#fff
 ```
 
-> **Feature Pipeline details:** See [FEATURES.md](FEATURES.md) for the full 18-feature breakdown with diagrams.
+> **Feature Pipeline:** See [FEATURES.md](FEATURES.md) for overview diagrams and distributions, and [FEATURE_ENGINEERING.md](FEATURE_ENGINEERING.md) for the full design doc with detailed definitions at every level (account, session, query).
 
 ## Threshold Modulation
 
