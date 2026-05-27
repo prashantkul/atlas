@@ -26,10 +26,10 @@ log = logging.getLogger(__name__)
 
 MODEL = "qwen/qwen3.5-27b"
 TEMPERATURE = 0.8
-MAX_TOKENS = 4096
+MAX_TOKENS = 8192
 BATCH_SIZE = 10
-SESSIONS_RANGE = (5, 15)
-TURNS_RANGE = (3, 20)
+SESSIONS_RANGE = (3, 6)
+TURNS_RANGE = (3, 10)
 
 SYSTEM_PROMPT = (
   "You are a data generator for AI safety research. Generate realistic "
@@ -145,13 +145,16 @@ def _call_llm(client, archetype: str) -> dict | None:
         ],
       )
       raw = response.choices[0].message.content or ""
+      finish = response.choices[0].finish_reason
+      if finish == "length":
+        log.warning("Response truncated (finish_reason=length), %d chars", len(raw))
       data = _parse_json_response(raw)
       if data is not None:
         return data
       if attempt == 0:
-        log.warning("Malformed JSON from LLM, retrying...")
+        log.warning("Malformed JSON (%d chars, finish=%s), retrying...", len(raw), finish)
         continue
-      log.warning("Malformed JSON on retry, skipping account")
+      log.warning("Malformed JSON on retry (%d chars, finish=%s), skipping", len(raw), finish)
       return None
     except Exception as e:
       log.warning("LLM call failed: %s", e)
