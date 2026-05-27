@@ -1,8 +1,12 @@
 # ATLAS — Account Trust Layered Assessment Signal
 
-## Context
+## Research Goals
 
-I'm interviewing for the Research Engineer, Frontier Safety Mitigations role at Google DeepMind. The HM's system design question was: "Build an account trust signal [0,1] using account-level features, then use it to modulate online safety classifiers." Her production system has L1 and L2 online classifiers that over-trigger false positives, plus manual offline log review by SMEs. I want a working POC with trained models and real evaluation metrics.
+1. Build a continuous account trust signal [0,1] from identity, behavioral, and session features that reliably separates benign from adversarial accounts
+2. Demonstrate that conditioning per-query safety classifiers on account trust reduces false positives on legitimate enterprise users without regressing on adversary detection
+3. Detect "sleeper" accounts — compromised enterprise accounts that shift from clean to adversarial behavior — and measure detection latency
+4. Design a threshold modulation strategy that balances user experience for trusted accounts with safety for untrusted ones
+5. Produce a deployable safety gateway that protects LLM inference endpoints (vLLM + Gemma 4) with sub-millisecond overhead
 
 ## What to Build
 
