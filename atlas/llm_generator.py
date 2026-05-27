@@ -144,10 +144,10 @@ def _call_llm(client, archetype: str) -> dict | None:
           {"role": "user", "content": user_prompt},
         ],
       )
-      raw = response.choices[0].message.content
-      data = json.loads(raw)
-      return data
-    except json.JSONDecodeError:
+      raw = response.choices[0].message.content or ""
+      data = _parse_json_response(raw)
+      if data is not None:
+        return data
       if attempt == 0:
         log.warning("Malformed JSON from LLM, retrying...")
         continue
@@ -157,6 +157,42 @@ def _call_llm(client, archetype: str) -> dict | None:
       log.warning("LLM call failed: %s", e)
       return None
   return None
+
+
+def _parse_json_response(raw: str) -> dict | None:
+  import re
+  raw = raw.strip()
+  raw = re.sub(r"^```(?:json)?\s*", "", raw)
+  raw = re.sub(r"\s*```$", "", raw)
+  raw = raw.strip()
+  try:
+    return json.loads(raw)
+  except json.JSONDecodeError:
+    pass
+  # try to find the outermost { ... } or [ ... ]
+  start = raw.find("{")
+  if start == -1:
+    start = raw.find("[")
+  if start == -1:
+    return None
+  bracket = raw[start]
+  close = "}" if bracket == "{" else "]"
+  depth = 0
+  end = -1
+  for i in range(start, len(raw)):
+    if raw[i] == bracket:
+      depth += 1
+    elif raw[i] == close:
+      depth -= 1
+      if depth == 0:
+        end = i + 1
+        break
+  if end == -1:
+    return None
+  try:
+    return json.loads(raw[start:end])
+  except json.JSONDecodeError:
+    return None
 
 
 def _build_account_record(
@@ -224,7 +260,7 @@ def generate(n_accounts: int = 500, output_dir: Path | None = None) -> None:
           record = _build_account_record(archetype, idx, llm_data)
           f.write(json.dumps(record) + "\n")
           generated += 1
-          time.sleep(random.uniform(1.0, 2.0))
+          time.sleep(random.uniform(0.5, 1.0))
 
   log.info("Generated %d / %d accounts. Output: %s", generated, total, outfile)
 
