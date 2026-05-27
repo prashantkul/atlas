@@ -28,50 +28,34 @@ ATLAS eliminates false positives on legitimate pharmaceutical researchers' CCL-d
 ## System Architecture
 
 ```mermaid
-block-beta
-  columns 5
+flowchart TD
+  title["ATLAS Pipeline"]
 
-  space:1 block:header:3
-    title["ATLAS Pipeline"]
-  end space:1
-
-  space:5
-
-  block:data:5
+  subgraph DATA ["Data Generation"]
     d1["LLM Generator\n(Qwen 3.5)"]
     d2["Programmatic\nGenerator"]
     d3["Feature\nEngineering"]
-    d4["Accounts\nParquet"]
-    d5["Queries\nParquet"]
   end
 
-  space:5
-
-  block:l1block:2
-    l1in(["18 Account\nFeatures"])
-    l1["L1 Trust Scorer\n(LightGBM)"]
-  end
-  space:1
-  block:l1out:2
-    ts{{"trust_score\n[0, 1]"}}
-    l1e["Sleeper\nDetection"]
+  subgraph STORE ["Datasets"]
+    d4[("Accounts\nParquet")]
+    d5[("Queries\nParquet")]
   end
 
-  space:5
+  subgraph L1 ["L1 — Account Trust Scorer"]
+    l1in(["18 Account Features"])
+    l1["LightGBM\nBinary Classifier"]
+    ts{{"trust_score ∈ [0, 1]"}}
+  end
 
-  block:l2block:3
-    l2in(["5 Query\nFeatures"])
+  subgraph L2 ["L2 — Trust-Conditioned Query Classifier"]
+    l2in(["5 Query Features"])
     plus["+ trust_score"]
-    l2["L2 Query Classifier\n(LightGBM)"]
-  end
-  space:1
-  block:l2out:1
+    l2["LightGBM\nBinary Classifier"]
     dec{{"ALLOW / BLOCK"}}
   end
 
-  space:5
-
-  block:eval:5
+  subgraph EVAL ["Evaluation"]
     ev1["SHAP\nAnalysis"]
     ev2["Confusion\nMatrices"]
     ev3["Threshold\nModulation"]
@@ -79,7 +63,31 @@ block-beta
     ev5["Evaluation\nReport"]
   end
 
-  style title fill:#1a1a2e,color:#fff
+  title --> DATA
+  d1 --> d3
+  d2 --> d3
+  d3 --> d4
+  d3 --> d5
+  d4 --> l1in
+  l1in --> l1
+  l1 --> ts
+  d5 --> l2in
+  ts --> plus
+  l2in --> plus
+  plus --> l2
+  l2 --> dec
+  ts --> ev4
+  l1 --> ev1
+  dec --> ev2
+  dec --> ev3
+  l2 --> ev5
+
+  style title fill:#e8edfc,color:#1a1a2e,stroke:#1a1a2e,stroke-width:2px,font-weight:bold
+  style DATA fill:#eaf2fb,stroke:#4a90d9,color:#1a1a2e
+  style STORE fill:#e8f5e9,stroke:#2d6a4f,color:#1a1a2e
+  style L1 fill:#fef0e6,stroke:#c44536,color:#1a1a2e
+  style L2 fill:#fef0e6,stroke:#c44536,color:#1a1a2e
+  style EVAL fill:#f0ecf5,stroke:#6c5b7b,color:#1a1a2e
   style d1 fill:#4a90d9,color:#fff
   style d2 fill:#4a90d9,color:#fff
   style d3 fill:#5ba8c8,color:#fff
@@ -88,7 +96,6 @@ block-beta
   style l1in fill:#e07a5f,color:#fff
   style l1 fill:#c44536,color:#fff
   style ts fill:#f4a261,color:#000
-  style l1e fill:#e9c46a,color:#000
   style l2in fill:#e07a5f,color:#fff
   style plus fill:#f4a261,color:#000
   style l2 fill:#c44536,color:#fff
