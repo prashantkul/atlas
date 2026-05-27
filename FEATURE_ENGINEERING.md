@@ -658,33 +658,58 @@ These features describe the query itself and its session context, independent of
 
 ## 4. Sleeper Account Feature Trajectories
 
-Sleeper accounts are unique: their features change over time. ATLAS tracks **feature snapshots every 7 days across 180 days** to capture the behavioral transition.
+Sleeper accounts are the most challenging archetype to detect: they start as legitimate enterprise accounts and gradually shift to adversarial behavior. Unlike persistent adversaries (who are adversarial from day one), sleepers exploit **accumulated trust** — they build a clean behavioral history, then pivot once the system has learned to trust them.
+
+ATLAS tracks **feature snapshots every 7 days across 180 days** (25 snapshots per account) to capture the behavioral transition and measure detection latency.
+
+### 4.1 Threat Model
+
+A sleeper account represents a real-world scenario where:
+
+- A legitimate enterprise account's credentials are **compromised** (phishing, insider threat, stolen API key)
+- An adversary **intentionally registers** a clean-looking enterprise account and waits before using it for attacks
+- An employee at a legitimate organization **goes rogue** and starts misusing their authorized access
+
+In all cases, the account has genuine enterprise credentials (`account_type=2`, `verification_level=2-3`, `org_reputation~0.75`) — identity features alone cannot detect the shift. Only behavioral and session features reveal the change.
+
+### 4.2 Two-Phase Behavioral Model
 
 ```mermaid
-flowchart LR
-  subgraph P1 ["Phase 1: Clean (days 0-80)"]
-    direction TB
-    p1a["refusal_rate ~ 0.02"]
-    p1b["ccl_concentration ~ 0.12"]
-    p1c["risk_slope ~ 0.0"]
-    p1d["trust_score ~ 0.95"]
+flowchart TD
+  subgraph TIMELINE ["180-Day Sleeper Timeline"]
+    direction LR
+    subgraph P1 ["Phase 1: Clean\n(days 0 → transition)"]
+      direction TB
+      p1a["Behaves like clean enterprise"]
+      p1b["Low refusal rate ~ 0.02"]
+      p1c["Low CCL concentration ~ 0.12"]
+      p1d["Flat risk slope ~ 0.0"]
+      p1e["Normal session lengths ~ 8"]
+      p1f["No jailbreak attempts"]
+    end
+
+    subgraph TRANS ["Transition\n(days 60-100)"]
+      direction TB
+      tr1["Sigmoid curve"]
+      tr2["Cubic Hermite\ninterpolation"]
+      tr3["Randomized per account\n(day 60-100)"]
+      tr4["~30 day ramp"]
+    end
+
+    subgraph P2 ["Phase 2: Adversarial\n(transition + 30 → day 180)"]
+      direction TB
+      p2a["Elevated refusal rate ~ 0.25"]
+      p2b["High CCL concentration ~ 0.4"]
+      p2c["Positive risk slope ~ 0.15"]
+      p2d["Longer sessions ~ 10"]
+      p2e["Occasional jailbreak attempts"]
+      p2f["Rephrase after refusal ~ 0.4"]
+    end
+
+    P1 --> TRANS --> P2
   end
 
-  subgraph TRANS ["Transition (days 60-100)"]
-    direction TB
-    tr["Sigmoid transition\nCubic Hermite interpolation\nPer-account randomized"]
-  end
-
-  subgraph P2 ["Phase 2: Adversarial (days 100+)"]
-    direction TB
-    p2a["refusal_rate ~ 0.25"]
-    p2b["ccl_concentration ~ 0.4"]
-    p2c["risk_slope ~ 0.15"]
-    p2d["trust_score < 0.5"]
-  end
-
-  P1 --> TRANS --> P2
-
+  style TIMELINE fill:#fafafa,stroke:#999,stroke-width:1px,color:#1a1a2e
   style P1 fill:#e8f5e9,stroke:#2d6a4f,stroke-width:2px,color:#1a1a2e
   style TRANS fill:#fff3e0,stroke:#e67e22,stroke-width:2px,color:#1a1a2e
   style P2 fill:#fde8e8,stroke:#c44536,stroke-width:2px,color:#1a1a2e
@@ -692,14 +717,131 @@ flowchart LR
   style p1b fill:#2d6a4f,color:#fff
   style p1c fill:#2d6a4f,color:#fff
   style p1d fill:#2d6a4f,color:#fff
-  style tr fill:#e67e22,color:#fff
+  style p1e fill:#2d6a4f,color:#fff
+  style p1f fill:#2d6a4f,color:#fff
+  style tr1 fill:#e67e22,color:#fff
+  style tr2 fill:#e67e22,color:#fff
+  style tr3 fill:#e67e22,color:#fff
+  style tr4 fill:#e67e22,color:#fff
   style p2a fill:#c44536,color:#fff
   style p2b fill:#c44536,color:#fff
   style p2c fill:#c44536,color:#fff
   style p2d fill:#c44536,color:#fff
+  style p2e fill:#c44536,color:#fff
+  style p2f fill:#c44536,color:#fff
 ```
 
-**Detection latency** is measured as the number of days after the behavioral shift before the trust score first drops below 0.5. In our evaluation: **median 35 days, 90th percentile 49 days**.
+### 4.3 Transition Function
+
+The phase transition is not a hard switch — it uses a **smooth sigmoid curve** (cubic Hermite interpolation) to model a gradual behavioral shift over approximately 30 days.
+
+For each feature at a given day, the value is interpolated between phase 1 and phase 2 means:
+
+```
+t = clamp((day - transition_day) / 30, 0, 1)
+t_smooth = 3t² - 2t³                          # cubic Hermite (smooth step)
+feature_value = phase1_mean × (1 - t_smooth) + phase2_mean × t_smooth
+```
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| Transition day | Uniform(60, 100) | Randomized per account |
+| Ramp duration | ~30 days | From first shift to full adversarial |
+| Snapshot interval | 7 days | Feature vectors recomputed weekly |
+| Total snapshots | 25 per account | Covering days 7, 14, ... 175 |
+| Noise | 0.5 × interpolated std | Per-snapshot Gaussian noise for realism |
+
+**Why cubic Hermite?** A linear ramp would create an unrealistically abrupt change in derivative at the transition point. The sigmoid produces smooth acceleration into the shift and smooth deceleration as the account settles into its new behavioral pattern — closer to how real compromises evolve.
+
+**Why randomize the transition day?** In reality, accounts are not compromised on a fixed schedule. Randomizing between day 60-100 ensures the model learns to detect transitions at any point in the account's lifecycle, not just at a fixed time offset.
+
+### 4.4 Feature Evolution During Transition
+
+The table below shows how each feature group evolves across the three phases:
+
+| Feature | Phase 1 (Clean) | Transition | Phase 2 (Adversarial) | Detection signal |
+|---------|:---:|:---:|:---:|:---|
+| **Identity** | | | | |
+| `account_age_days` | ~540 | ~560 | ~600 | Not useful — age keeps increasing |
+| `verification_level` | 2-3 | 2-3 | 2-3 | Not useful — doesn't change |
+| `org_reputation` | ~0.75 | ~0.75 | ~0.75 | Not useful — org hasn't changed |
+| **Behavioral** | | | | |
+| `refusal_rate_7d` | 0.02 | 0.02 → 0.25 | 0.25 | Strong — sudden spike |
+| `refusal_rate_30d` | 0.015 | 0.015 → 0.15 | 0.15 | Moderate — lags behind 7d |
+| `refusal_rate_zscore` | ~0.0 | 0.0 → **2.5** | 1.5-2.5 | **Strongest** — captures spike relative to own baseline |
+| `rephrase_after_refusal_rate` | 0.1 | 0.1 → 0.4 | 0.4 | Strong — adversarial persistence pattern |
+| `query_entropy` | 1.5 | 1.5 → 1.8 | 1.8 | Weak — modest change |
+| `ccl_domain_concentration` | 0.12 | 0.12 → 0.4 | 0.4 | Strong — shift toward dangerous domains |
+| `cross_session_persistence` | 0.65 | 0.65 → 0.6 | 0.6 | Weak — small change |
+| `channel_migration` | 0.05 | 0.05 → 0.15 | 0.15 | Moderate — may switch access path |
+| **Session** | | | | |
+| `max_risk_score_10sessions` | 0.3 | 0.3 → 0.7 | 0.7 | Strong — high-risk sessions appear |
+| `risk_trend_slope` | 0.0 | 0.0 → **0.15** | 0.15 | **Strongest** — clear upward trend |
+| `mean_topic_escalation` | 0.02 | 0.02 → 0.1 | 0.1 | Moderate — within-session escalation |
+| `mean_session_length` | 8 | 8 → 10 | 10 | Weak — modest increase |
+| `burst_score` | 0.3 | 0.3 → 0.4 | 0.4 | Weak — modest change |
+
+**Key takeaway:** Identity features are useless for sleeper detection — the account's identity doesn't change. The two strongest signals are `refusal_rate_zscore` (spike relative to own baseline) and `risk_trend_slope` (sustained upward trend in session risk). These are the features that drive the L1 model to lower the trust score during the transition.
+
+### 4.5 Detection Latency
+
+Detection latency is the number of days between the start of the behavioral shift and the first time the L1 trust score drops below 0.5 (the threshold where the account is considered untrusted).
+
+```mermaid
+flowchart LR
+  subgraph DETECT ["Detection Timeline"]
+    direction LR
+    d1["Transition\nbegins"]
+    d2["Features start\nshifting"]
+    d3["trust_score\ncrosses 0.5"]
+    d4["Account flagged\nas untrusted"]
+  end
+
+  d1 -->|"7-14 days\n(feature lag)"| d2
+  d2 -->|"14-35 days\n(model response)"| d3
+  d3 -->|"immediate"| d4
+
+  style DETECT fill:#fafafa,stroke:#999,stroke-width:1px,color:#1a1a2e
+  style d1 fill:#e67e22,color:#fff
+  style d2 fill:#e67e22,color:#fff
+  style d3 fill:#c44536,color:#fff
+  style d4 fill:#c44536,color:#fff
+```
+
+**Evaluation results:**
+
+| Metric | Value | Interpretation |
+|--------|-------|----------------|
+| Median detection latency | **35 days** | Half of sleepers detected within 5 weeks of shift |
+| 90th percentile | **49 days** | 90% detected within 7 weeks |
+| Min | ~14 days | Fastest detection — aggressive shift with strong signals |
+| Max | ~56 days | Slowest detection — gradual shift with noisy features |
+
+**Why the lag?** Detection is not instantaneous because:
+
+1. **Feature computation lag (7-14 days):** Behavioral features like `refusal_rate_7d` need a full 7-day window of adversarial behavior before they meaningfully shift. The 30-day rate lags even more.
+2. **Rolling window smoothing:** Features aggregate over windows, so a few adversarial sessions don't immediately dominate the aggregate.
+3. **Model confidence threshold:** The LightGBM model needs multiple shifted features to push the trust score below 0.5 — a single anomalous feature isn't sufficient.
+
+### 4.6 Why Sleepers Are Harder Than Persistent Adversaries
+
+| Dimension | Persistent Adversary | Sleeper | Why sleepers are harder |
+|-----------|---------------------|---------|------------------------|
+| Identity features | Low verification, young account, no org | Enterprise credentials, old account, real org | Identity provides no signal |
+| Behavioral baseline | Always adversarial | Clean for 60-100 days | Model has "learned" to trust this account |
+| Trust score at onset | ~0.0 from day 1 | ~0.95 before shift | Must overcome prior trust |
+| Detection approach | One-shot classification | Anomaly detection over time | Requires temporal modeling |
+| Real-world analog | Script kiddie, bot farm | Insider threat, compromised credentials | Higher stakes, harder attribution |
+
+### 4.7 Production Considerations for Sleeper Detection
+
+In a production system, several enhancements would improve sleeper detection latency:
+
+- **Streaming feature updates:** Instead of 7-day batch snapshots, compute rolling features on every query. This reduces the feature computation lag from 7 days to near-zero.
+- **Change-point detection:** Layer a dedicated change-point algorithm (e.g., CUSUM, BOCPD) on top of the trust score time series. Instead of waiting for trust to cross a fixed threshold, detect the *statistical shift* in the score trajectory — this can fire earlier.
+- **Multi-scale windows:** Compute refusal rates and risk scores at 1-hour, 1-day, 7-day, and 30-day windows. Short windows catch abrupt shifts; long windows catch gradual drift.
+- **Alert escalation:** Instead of a binary trusted/untrusted threshold at 0.5, use a tiered response: trust 0.3-0.5 triggers enhanced monitoring (more aggressive L2 thresholds), trust < 0.3 triggers full block + human review.
+- **Peer comparison:** Compare the account's behavioral trajectory to other accounts in the same organization. If one account in a 50-person org suddenly deviates while the other 49 remain stable, that's a stronger signal than the individual anomaly alone.
 
 ---
 
