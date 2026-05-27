@@ -174,19 +174,79 @@ def _classify_query(
     }
 
 
+async def _proxy_to_vllm(path: str, body: dict) -> JSONResponse:
+    import httpx
+
+    vllm_url = _state.get("vllm_url")
+    if not vllm_url:
+        return JSONResponse({"error": "vLLM backend not configured"}, status_code=502)
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(f"{vllm_url}{path}", json=body)
+        return JSONResponse(resp.json(), status_code=resp.status_code)
+
+
+def _inject_atlas_header(response: JSONResponse, result: dict) -> JSONResponse:
+    response.headers["X-ATLAS-Trust-Score"] = str(result["trust_score"])
+    response.headers["X-ATLAS-Block-Probability"] = str(result["block_probability"])
+    response.headers["X-ATLAS-Decision"] = "block" if result["should_block"] else "allow"
+    response.headers["X-ATLAS-Latency-Ms"] = str(result["atlas_latency_ms"])
+    return response
+
+
+def _blocked_response(result: dict, is_chat: bool = True) -> JSONResponse:
+    if is_chat:
+        body = {
+            "id": "atlas-blocked",
+            "object": "chat.completion",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": REFUSAL_MESSAGE},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
+    else:
+        body = {
+            "id": "atlas-blocked",
+            "object": "text_completion",
+            "choices": [
+                {
+                    "index": 0,
+                    "text": REFUSAL_MESSAGE,
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
+    resp = JSONResponse(body)
+    return _inject_atlas_header(resp, result)
+
+
+def _extract_account_id(request: Request, body: dict) -> str:
+    return (
+        request.headers.get("X-Account-ID")
+        or request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+        or body.pop("account_id", None)
+        or "unknown"
+    )
+
+
+def _extract_content_from_messages(messages: list[dict]) -> str:
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            return msg.get("content", "")
+    return ""
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     body = await request.json()
-    account_id = request.headers.get("X-Account-ID") or body.pop("account_id", None) or "unknown"
+    account_id = _extract_account_id(request, body)
+    content = _extract_content_from_messages(body.get("messages", []))
 
-    messages = body.get("messages", [])
-    last_user_msg = ""
-    for msg in reversed(messages):
-        if msg.get("role") == "user":
-            last_user_msg = msg.get("content", "")
-            break
-
-    result = _classify_query(account_id, last_user_msg)
+    result = _classify_query(account_id, content)
 
     if result["should_block"]:
         log.info(
@@ -197,21 +257,7 @@ async def chat_completions(request: Request):
             result["block_probability"],
             result["atlas_latency_ms"],
         )
-        return JSONResponse(
-            {
-                "id": "atlas-blocked",
-                "object": "chat.completion",
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {"role": "assistant", "content": REFUSAL_MESSAGE},
-                        "finish_reason": "stop",
-                    }
-                ],
-                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-                "atlas": result,
-            }
-        )
+        return _blocked_response(result, is_chat=True)
 
     log.info(
         "ALLOWED account=%s trust=%.2f risk=%.2f block_prob=%.2f latency=%.1fms",
@@ -228,25 +274,74 @@ async def chat_completions(request: Request):
 
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(f"{vllm_url}/v1/chat/completions", json=body)
-            data = resp.json()
-            data["atlas"] = result
-            return JSONResponse(data)
+            json_resp = JSONResponse(resp.json(), status_code=resp.status_code)
+            return _inject_atlas_header(json_resp, result)
 
-    return JSONResponse(
+    resp = JSONResponse(
         {
             "id": "atlas-passthrough",
             "object": "chat.completion",
             "choices": [
                 {
                     "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": "[vLLM not connected — query was ALLOWED by ATLAS]",
-                    },
+                    "message": {"role": "assistant", "content": "[vLLM not connected — query was ALLOWED by ATLAS]"},
                     "finish_reason": "stop",
                 }
             ],
-            "atlas": result,
+        }
+    )
+    return _inject_atlas_header(resp, result)
+
+
+@app.post("/v1/completions")
+async def completions(request: Request):
+    body = await request.json()
+    account_id = _extract_account_id(request, body)
+    content = body.get("prompt", "")
+
+    result = _classify_query(account_id, content)
+
+    if result["should_block"]:
+        log.info("BLOCKED (completions) account=%s trust=%.2f", account_id, result["trust_score"])
+        return _blocked_response(result, is_chat=False)
+
+    log.info("ALLOWED (completions) account=%s trust=%.2f", account_id, result["trust_score"])
+
+    vllm_url = _state.get("vllm_url")
+    if vllm_url:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(f"{vllm_url}/v1/completions", json=body)
+            json_resp = JSONResponse(resp.json(), status_code=resp.status_code)
+            return _inject_atlas_header(json_resp, result)
+
+    resp = JSONResponse(
+        {
+            "id": "atlas-passthrough",
+            "object": "text_completion",
+            "choices": [
+                {"index": 0, "text": "[vLLM not connected — query was ALLOWED by ATLAS]", "finish_reason": "stop"}
+            ],
+        }
+    )
+    return _inject_atlas_header(resp, result)
+
+
+@app.get("/v1/models")
+async def list_models():
+    vllm_url = _state.get("vllm_url")
+    if vllm_url:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{vllm_url}/v1/models")
+            return JSONResponse(resp.json(), status_code=resp.status_code)
+
+    return JSONResponse(
+        {
+            "object": "list",
+            "data": [{"id": "atlas-gateway", "object": "model", "owned_by": "atlas"}],
         }
     )
 
@@ -257,6 +352,7 @@ async def health():
         "status": "ok",
         "accounts_loaded": len(_state.get("feature_store", {})),
         "models_loaded": "l1_model" in _state and "l2_model" in _state,
+        "vllm_connected": _state.get("vllm_url") is not None,
     }
 
 
