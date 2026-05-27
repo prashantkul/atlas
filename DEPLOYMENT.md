@@ -4,18 +4,28 @@ This document describes how to deploy the ATLAS trust-conditioned safety pipelin
 
 ## Architecture
 
+The gateway is deliberately **stateless and lightweight** — it holds only the L2 model (~1MB) and a precomputed trust_score lookup table (one float per account). It never runs L1 inference or accesses raw account features at request time.
+
+L1 trust scoring runs **offline** in the batch pipeline. The offline pipeline writes precomputed trust scores to a store (parquet file in the demo, Redis/Bigtable in production). The gateway reads this store at startup and does O(1) lookups at request time.
+
 ```mermaid
 flowchart LR
   user["User\nRequest"]
 
+  subgraph OFFLINE ["Offline Pipeline (batch)"]
+    direction TB
+    feat["Feature\nEngineering"]
+    l1["L1 Trust Scorer\n(LightGBM)"]
+    store[("Trust Score Store\naccount_id → float")]
+    feat --> l1 --> store
+  end
+
   subgraph GATEWAY ["ATLAS Safety Gateway (FastAPI)"]
     direction TB
-    auth["Account\nLookup"]
-    l1["L1 Trust Scorer\n(LightGBM)"]
+    lookup["Trust Score\nLookup (O(1))"]
     l2["L2 Query Classifier\n(LightGBM)"]
     decision{{"ALLOW / BLOCK"}}
-    auth --> l1
-    l1 -->|"trust_score"| l2
+    lookup -->|"trust_score"| l2
     l2 --> decision
   end
 
@@ -26,16 +36,20 @@ flowchart LR
     vllm --> gemma
   end
 
+  store -.->|"load at startup"| lookup
   user --> GATEWAY
   decision -->|"ALLOW"| vllm
   decision -->|"BLOCK"| blocked["Safety Refusal\nReturned to User"]
   gemma --> response["LLM Response\nReturned to User"]
 
+  style OFFLINE fill:#fff3e0,stroke:#e67e22,stroke-width:2px,color:#1a1a2e
   style GATEWAY fill:#fef0e6,stroke:#c44536,stroke-width:2px,color:#1a1a2e
   style LLM fill:#eaf2fb,stroke:#4a90d9,stroke-width:2px,color:#1a1a2e
   style user fill:#6c5b7b,color:#fff
-  style auth fill:#e07a5f,color:#fff
-  style l1 fill:#c44536,color:#fff
+  style feat fill:#e67e22,color:#fff
+  style l1 fill:#e67e22,color:#fff
+  style store fill:#2d6a4f,color:#fff
+  style lookup fill:#e07a5f,color:#fff
   style l2 fill:#c44536,color:#fff
   style decision fill:#f4a261,color:#000
   style vllm fill:#4a90d9,color:#fff
@@ -44,35 +58,43 @@ flowchart LR
   style response fill:#2d6a4f,color:#fff
 ```
 
+**Why this separation matters:**
+- The gateway never needs raw account features (18-dimensional vectors) — just one precomputed float per account
+- L1 model updates don't require gateway restarts — the offline pipeline writes new scores, the gateway picks them up
+- The gateway's memory footprint is minimal: L2 model (~1MB) + trust scores (500K accounts = ~4MB)
+- Feature engineering complexity is isolated in the batch pipeline, not in the latency-critical serving path
+
 ## Request Flow
 
 ```mermaid
 sequenceDiagram
   participant U as User
   participant GW as ATLAS Gateway
-  participant L1 as L1 Trust Scorer
+  participant TS as Trust Score Store
   participant L2 as L2 Query Classifier
   participant V as vLLM (Gemma 4)
 
-  U->>GW: POST /v1/chat/completions<br/>{model, messages, account_id}
+  U->>GW: POST /v1/chat/completions<br/>{model, messages}
 
-  GW->>GW: Extract account_id,<br/>compute query features
+  GW->>GW: Extract account_id from<br/>header or Bearer token
 
-  GW->>L1: score(account_features)
-  L1-->>GW: trust_score = 0.91
+  GW->>TS: lookup(account_id)
+  TS-->>GW: trust_score = 0.91
+
+  GW->>GW: Compute query features<br/>(risk, CCL, jailbreak)
 
   GW->>L2: classify(query_features + trust_score)
   L2-->>GW: P(block) = 0.12
 
   alt P(block) < threshold
-    GW->>V: Forward request
+    GW->>V: Forward request (unmodified)
     V-->>GW: LLM response
-    GW-->>U: 200 OK + response
+    GW-->>U: 200 OK + response<br/>+ X-ATLAS headers
   else P(block) >= threshold
-    GW-->>U: 200 OK + safety refusal
+    GW-->>U: 200 OK + safety refusal<br/>+ X-ATLAS headers
   end
 
-  Note over GW: Latency overhead: ~2ms<br/>(LightGBM inference)
+  Note over GW: Total overhead: ~1ms<br/>(dict lookup + LightGBM L2 only)
 ```
 
 ## Components

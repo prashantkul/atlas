@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from atlas.utils import (
     ACCOUNTS_PARQUET,
     ALL_FEATURES,
+    DATA_DIR,
     MODELS_DIR,
     RISK_LEVEL_MAP,
     setup_logging,
@@ -45,36 +46,31 @@ REFUSAL_MESSAGE = (
 _state: dict = {}
 
 
-def _load_models(models_dir: Path, accounts_path: Path) -> None:
-    log.info("Loading L1 model from %s", models_dir / "l1_trust_model.pkl")
-    _state["l1_model"] = joblib.load(models_dir / "l1_trust_model.pkl")
-
+def _load_models(models_dir: Path, accounts_path: Path, l1_predictions_path: Path | None = None) -> None:
     log.info("Loading L2 ATLAS model from %s", models_dir / "l2_atlas_model.pkl")
     _state["l2_model"] = joblib.load(models_dir / "l2_atlas_model.pkl")
 
-    log.info("Loading account features from %s", accounts_path)
-    accounts = pd.read_parquet(accounts_path)
-    feature_store = {}
-    for _, row in accounts.iterrows():
-        features = {f: row[f] for f in ALL_FEATURES}
-        feature_store[row["account_id"]] = features
-    _state["feature_store"] = feature_store
-    _state["l1_cache"] = {}
-    log.info("Loaded %d accounts into feature store", len(feature_store))
+    if l1_predictions_path and l1_predictions_path.exists():
+        log.info("Loading precomputed trust scores from %s", l1_predictions_path)
+        preds = pd.read_parquet(l1_predictions_path)
+        trust_store = dict(zip(preds["account_id"], preds["trust_score"]))
+    else:
+        log.info("No precomputed scores — computing from L1 model + account features")
+        l1_model = joblib.load(models_dir / "l1_trust_model.pkl")
+        accounts = pd.read_parquet(accounts_path)
+        x = accounts[ALL_FEATURES].values
+        scores = l1_model.predict_proba(x)[:, 1]
+        trust_store = dict(zip(accounts["account_id"], scores))
+
+    _state["trust_store"] = {k: float(v) for k, v in trust_store.items()}
+    log.info("Loaded trust scores for %d accounts (gateway holds no raw features)", len(_state["trust_store"]))
+
+
+DEFAULT_TRUST = 0.5
 
 
 def _get_trust_score(account_id: str) -> float:
-    if account_id in _state["l1_cache"]:
-        return _state["l1_cache"][account_id]
-
-    features = _state["feature_store"].get(account_id)
-    if features is None:
-        return 0.5
-
-    x = np.array([[features[f] for f in ALL_FEATURES]])
-    trust = float(_state["l1_model"].predict_proba(x)[:, 1][0])
-    _state["l1_cache"][account_id] = trust
-    return trust
+    return _state["trust_store"].get(account_id, DEFAULT_TRUST)
 
 
 def _estimate_query_risk(content: str) -> tuple[float, bool]:
@@ -363,11 +359,21 @@ def main() -> None:
     parser.add_argument("--vllm-url", type=str, default=None, help="vLLM server URL (e.g., http://localhost:8000)")
     parser.add_argument("--models-dir", type=str, default=str(MODELS_DIR))
     parser.add_argument("--accounts", type=str, default=str(ACCOUNTS_PARQUET))
+    parser.add_argument(
+        "--trust-scores",
+        type=str,
+        default=str(DATA_DIR / "l1_predictions.parquet"),
+        help="Precomputed trust scores (production pattern — gateway never runs L1)",
+    )
     args = parser.parse_args()
 
     setup_logging()
 
-    _load_models(Path(args.models_dir), Path(args.accounts))
+    _load_models(
+        Path(args.models_dir),
+        Path(args.accounts),
+        l1_predictions_path=Path(args.trust_scores),
+    )
     _state["vllm_url"] = args.vllm_url
 
     if args.vllm_url:
